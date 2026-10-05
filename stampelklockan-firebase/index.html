@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Stämpla">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#DCE3E7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121A22" media="(prefers-color-scheme: dark)">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="icon" href="icon-192.png">
+<title>Stämpelklockan</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=Courier+Prime:wght@400;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#DCE3E7; --card:#F4F7F8; --ink:#1D2B3A; --muted:#5E6E7C; --rule:#C9D3D9;
+  --stamp:#B3261E; --go:#1F6F5C; --btn-text:#F4F7F8;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#121A22; --card:#1A2530; --ink:#E3EAEF; --muted:#8FA0AE; --rule:#2C3A47;
+    --stamp:#FF6B5E; --go:#4FC3A1; --btn-text:#121A22;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#121A22; --card:#1A2530; --ink:#E3EAEF; --muted:#8FA0AE; --rule:#2C3A47;
+  --stamp:#FF6B5E; --go:#4FC3A1; --btn-text:#121A22;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif;font-size:16px;line-height:1.45;
+  -webkit-font-smoothing:antialiased}
+main{max-width:30rem;margin:0 auto;padding:1.25rem 1rem 3rem}
+.mono{font-family:"Courier Prime","Courier New",monospace}
+
+header{display:flex;justify-content:space-between;align-items:baseline;gap:1rem;margin-bottom:1.25rem}
+header h1{font-size:1rem;font-weight:700;font-stretch:115%;margin:0}
+header .date{color:var(--muted);font-size:.95rem;text-transform:capitalize}
+
+.clock{background:var(--card);border-radius:18px;padding:1.5rem 1.25rem 1.25rem;margin-bottom:1rem}
+.status{font-size:.95rem;color:var(--muted);margin:0 0 .25rem}
+.big{font-size:3.2rem;font-weight:800;font-stretch:72%;line-height:1;margin:0 0 1.25rem;letter-spacing:-.01em;font-variant-numeric:tabular-nums}
+
+button{font:inherit;cursor:pointer;border:0}
+button:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--go);outline-offset:2px}
+.primary{width:100%;padding:1.35rem 1rem;border-radius:14px;background:var(--ink);color:var(--btn-text);
+  font-size:1.35rem;font-weight:800;font-stretch:120%;transition:transform .08s}
+.primary:active{transform:scale(.98)}
+.primary.out{background:var(--stamp)}
+.primary:disabled{background:var(--rule);color:var(--muted);cursor:default;transform:none}
+.secondary{width:100%;margin-top:.6rem;padding:1rem;border-radius:14px;background:transparent;color:var(--ink);
+  border:2px solid var(--ink);font-size:1.05rem;font-weight:700;font-stretch:110%}
+.secondary:disabled{border-color:var(--rule);color:var(--muted);cursor:default}
+.link{background:none;color:var(--muted);text-decoration:underline;padding:.5rem 0;font-size:.9rem}
+
+/* the time card */
+.card{background:var(--card);border-radius:4px;padding:0 0 .25rem;margin-bottom:1rem;
+  border-left:6px solid var(--ink)}
+.card-head{display:flex;justify-content:space-between;align-items:center;padding:.9rem 1rem .6rem}
+.card-head h2{font-size:1rem;margin:0;font-weight:700}
+.nav{display:flex;gap:.25rem}
+.nav button{background:none;color:var(--ink);font-size:1.2rem;width:2.25rem;height:2.25rem;border-radius:50%}
+.nav button:disabled{color:var(--rule)}
+.totals{display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--rule);border-bottom:1px solid var(--rule)}
+.totals div{padding:.7rem 1rem}
+.totals div+div{border-left:1px solid var(--rule)}
+.totals small{display:block;color:var(--muted);font-size:.8rem}
+.totals strong{font-size:1.15rem;font-variant-numeric:tabular-nums}
+.pos{color:var(--go)} .neg{color:var(--stamp)}
+
+.rows{width:100%;border-collapse:collapse;font-size:.95rem}
+.rows th{font-weight:400;color:var(--muted);font-size:.8rem;text-align:left;padding:.6rem .5rem .3rem}
+.rows td{padding:.55rem .5rem;border-top:1px solid var(--rule);font-variant-numeric:tabular-nums}
+.rows th:first-child,.rows td:first-child{padding-left:1rem}
+.rows td.r,.rows th.r{text-align:right;padding-right:1rem}
+.rows tr.day{cursor:pointer}
+.rows tr.day:hover td{background:color-mix(in srgb,var(--ink) 5%,transparent)}
+.rows .t{font-family:"Courier Prime","Courier New",monospace;font-weight:700}
+.rows .open{color:var(--stamp)}
+.empty{padding:1rem;color:var(--muted);margin:0}
+.card-foot{display:flex;justify-content:space-between;padding:.25rem 1rem .5rem;flex-wrap:wrap;gap:.5rem}
+
+@keyframes thunk{0%{transform:scale(1.6) rotate(-6deg);opacity:0}60%{transform:scale(.94) rotate(-2deg);opacity:1}100%{transform:scale(1) rotate(-2deg)}}
+.stamped{display:inline-block;animation:thunk .35s ease-out}
+@media (prefers-reduced-motion:reduce){.stamped{animation:none}.primary{transition:none}}
+
+details.settings{background:var(--card);border-radius:14px;padding:.25rem 1rem}
+details.settings summary{padding:.75rem 0;font-weight:700;cursor:pointer}
+.field{display:flex;justify-content:space-between;align-items:center;gap:1rem;padding:.5rem 0;border-top:1px solid var(--rule)}
+.field input{font:inherit;width:6rem;padding:.4rem .5rem;border:1px solid var(--rule);border-radius:8px;background:var(--bg);color:var(--ink);text-align:right}
+.note{color:var(--muted);font-size:.85rem;margin:.5rem 0 .75rem}
+
+dialog{border:0;border-radius:16px;padding:1.25rem;background:var(--card);color:var(--ink);width:min(26rem,92vw)}
+dialog::backdrop{background:rgba(10,15,20,.45)}
+dialog h3{margin:0 0 .75rem;font-size:1.1rem}
+dialog .field input[type=date]{width:10rem}
+dialog .actions{display:flex;gap:.5rem;margin-top:1rem}
+dialog .actions button{flex:1;padding:.8rem;border-radius:10px;font-weight:700}
+.save{background:var(--ink);color:var(--btn-text)}
+.cancel{background:transparent;color:var(--ink);border:2px solid var(--rule)!important}
+.del{background:none;color:var(--stamp);text-decoration:underline;padding:.75rem 0 0;font-size:.9rem}
+.toast{position:fixed;left:50%;bottom:calc(1rem + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  background:var(--ink);color:var(--btn-text);padding:.6rem 1rem;border-radius:10px;font-size:.9rem;display:none;max-width:90vw}
+
+[hidden]{display:none!important}
+.auth{background:var(--card);border-radius:18px;padding:1.5rem 1.25rem;margin-top:1rem}
+.auth h2{margin:0 0 .25rem;font-size:1.35rem;font-weight:800;font-stretch:110%}
+.auth p.lead{color:var(--muted);margin:0 0 1.25rem}
+.auth label{display:block;font-size:.9rem;color:var(--muted);margin:.75rem 0 .3rem}
+.auth input{font:inherit;width:100%;padding:.75rem .8rem;border:1px solid var(--rule);border-radius:10px;background:var(--bg);color:var(--ink)}
+.auth .primary{margin-top:1.25rem;font-size:1.1rem;padding:1rem}
+.auth .row{display:flex;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin-top:.5rem}
+.auth .error{color:var(--stamp);font-size:.9rem;margin:.75rem 0 0;min-height:1.2em}
+.who{display:flex;justify-content:space-between;align-items:center;gap:1rem;border-top:1px solid var(--rule);padding:.5rem 0;overflow-wrap:anywhere}
+.sync{color:var(--muted);font-size:.8rem;margin:0 0 .75rem}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Stämpelklockan</h1>
+    <span class="date" id="today"></span>
+  </header>
+
+  <section class="auth" id="authView" hidden>
+    <h2 id="authTitle">Logga in</h2>
+    <p class="lead" id="authLead">Dina tider sparas på ditt eget konto. Ingen annan kan se dem.</p>
+    <form id="authForm" novalidate>
+      <label for="aEmail">E-post</label>
+      <input id="aEmail" type="email" autocomplete="email" inputmode="email" required>
+      <label for="aPass">Lösenord</label>
+      <input id="aPass" type="password" autocomplete="current-password" minlength="6" required>
+      <button class="primary" id="aSubmit" type="submit">Logga in</button>
+    </form>
+    <p class="error" id="aError" role="alert"></p>
+    <div class="row">
+      <button class="link" id="aToggle" type="button">Skapa konto</button>
+      <button class="link" id="aReset" type="button">Glömt lösenordet?</button>
+    </div>
+  </section>
+
+  <div id="appView" hidden>
+    <section class="clock" aria-live="polite">
+      <p class="status" id="status">Laddar…</p>
+      <p class="big" id="big">&nbsp;</p>
+      <button class="primary" id="primary" disabled>Clock in, lock in</button>
+      <button class="secondary" id="lunch" hidden>Äh, nu tar vi lunch</button>
+      <button class="link" id="undo" hidden>Ångra utstämplingen</button>
+    </section>
+    <p class="sync" id="sync" aria-live="polite"></p>
+
+    <section class="card">
+      <div class="card-head">
+        <h2 id="periodLabel">Period</h2>
+        <div class="nav">
+          <button id="prev" aria-label="Föregående period">‹</button>
+          <button id="next" aria-label="Nästa period">›</button>
+        </div>
+      </div>
+      <div class="totals">
+        <div><small>Timmar</small><strong id="tHours">0 h</strong></div>
+        <div><small>Övertid i perioden</small><strong id="tOver">0 h</strong></div>
+        <div><small>Saldo totalt</small><strong id="tBal">0 h</strong></div>
+      </div>
+      <div id="rowsWrap"></div>
+      <div class="card-foot">
+        <button class="link" id="addDay">Lägg till dag manuellt</button>
+        <button class="link" id="export">Exportera perioden som CSV</button>
+      </div>
+    </section>
+
+    <details class="settings">
+      <summary>Inställningar</summary>
+      <div class="field"><label for="sTarget">Normal arbetsdag (timmar)</label><input id="sTarget" type="number" step="0.25" min="1" max="24"></div>
+      <div class="field"><label for="sLunch">Lunch (minuter)</label><input id="sLunch" type="number" step="5" min="0" max="180"></div>
+      <p class="note">Perioden går från den 26:e till den 25:e. Dagar du inte stämplar räknas inte alls. Tryck på en rad i tidkortet för att rätta en tid.</p>
+      <div class="who"><span id="whoEmail"></span><button class="link" id="signOut">Logga ut</button></div>
+    </details>
+  </div>
+</main>
+
+<dialog id="edit">
+  <h3 id="editTitle">Rätta dag</h3>
+  <div class="field" id="dateField"><label for="eDate">Datum</label><input id="eDate" type="date"></div>
+  <div class="field"><label for="eIn">In</label><input id="eIn" type="time"></div>
+  <div class="field"><label for="eOut">Ut</label><input id="eOut" type="time"></div>
+  <div class="field"><label for="eLunch">Lunch (minuter)</label><input id="eLunch" type="number" step="5" min="0" max="180"></div>
+  <div class="actions">
+    <button class="cancel" id="eCancel">Avbryt</button>
+    <button class="save" id="eSave">Spara</button>
+  </div>
+  <button class="del" id="eDelete">Ta bort dagen</button>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
