@@ -1,0 +1,85 @@
+rules_version = '2';
+
+// ===============================================================
+// Assumed Data Model
+// ===============================================================
+//
+// Collection: users
+// Document ID: the signed-in user's Firebase Auth uid
+// Fields:
+//   - target: number (required, 1 to 24) - normal working hours per day
+//   - lunch: int (required, 0 to 180) - default lunch length in minutes
+//   - updatedAt: timestamp (required, must equal server time of the write)
+//
+// Subcollection: users/{uid}/days
+// Document ID: date as YYYY-MM-DD
+// Fields:
+//   - date: string (required, equals the document ID)
+//   - clockIn: string (required, HH:MM, 24h)
+//   - clockOut: string HH:MM or null (required key; null while the shift is open)
+//   - lunch: int (required, 0 to 180) - minutes subtracted for lunch
+//   - updatedAt: timestamp (required, must equal server time of the write)
+//
+// No email addresses or other personal details are stored in Firestore.
+// Every document is readable and writable only by the user who owns it.
+// ===============================================================
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ---------------- Helper functions ----------------
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+    function isTime(v) {
+      return v is string && v.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$');
+    }
+    function isServerTime(v) {
+      return v is timestamp && v == request.time;
+    }
+
+    // ---------------- Domain validators ----------------
+    function isValidSettings(data) {
+      return hasOnlyAllowedFields(['target', 'lunch', 'updatedAt']) &&
+             hasRequiredFields(['target', 'lunch', 'updatedAt']) &&
+             data.target is number && data.target >= 1 && data.target <= 24 &&
+             data.lunch is int && data.lunch >= 0 && data.lunch <= 180 &&
+             isServerTime(data.updatedAt);
+    }
+
+    function isValidDay(dayId, data) {
+      return hasOnlyAllowedFields(['date', 'clockIn', 'clockOut', 'lunch', 'updatedAt']) &&
+             hasRequiredFields(['date', 'clockIn', 'clockOut', 'lunch', 'updatedAt']) &&
+             dayId.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$') &&
+             data.date == dayId &&
+             isTime(data.clockIn) &&
+             (data.clockOut == null || isTime(data.clockOut)) &&
+             data.lunch is int && data.lunch >= 0 && data.lunch <= 180 &&
+             isServerTime(data.updatedAt);
+    }
+
+    // ---------------- Rules ----------------
+    match /users/{userId} {
+      allow read: if isOwner(userId);
+      allow create, update: if isOwner(userId) && isValidSettings(request.resource.data);
+      allow delete: if false;
+
+      match /days/{dayId} {
+        allow read: if isOwner(userId);
+        allow create, update: if isOwner(userId) && isValidDay(dayId, request.resource.data);
+        allow delete: if isOwner(userId);
+      }
+    }
+
+    // Everything else is denied by default.
+  }
+}
