@@ -1,7 +1,8 @@
 // Stämpelklockan: Firebase Authentication (e-post/lösenord) + Cloud Firestore.
 // Datamodell (se firestore.rules):
 //   users/{uid}                 inställningar: target, lunch, updatedAt (+ valfritt breakfastOn, breakfast)
-//   users/{uid}/days/{datum}    en dag:  date, clockIn, clockOut, lunch, updatedAt (+ valfritt breakfast)
+//   users/{uid}/days/{datum}    en dag: date, clockIn, clockOut, lunch, updatedAt (+ valfritt breakfast)
+// Frukostfälten är valfria: gamla dokument utan dem läses som 0 minuter och skrivs aldrig om automatiskt.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
@@ -44,7 +45,7 @@ const DEFAULTS = { target: 8, lunch: 30, breakfastOn: false, breakfast: 30 };
 
 let uid = null;
 let settings = { ...DEFAULTS };
-let days = {};            // datum -> { date, clockIn, clockOut, lunch }
+let days = {};            // datum -> { date, clockIn, clockOut, lunch, breakfast }
 let loaded = false;
 let viewPeriod = null;
 let lastStamp = null;
@@ -71,7 +72,7 @@ function dayHours(day) {
   if (!day || !day.clockIn || !day.clockOut) return null;
   let mins = toMin(day.clockOut) - toMin(day.clockIn);
   if (mins < 0) mins += 1440;
-  return (mins - (Number(day.lunch) || 0)) / 60;
+  return (mins - breakMins(day)) / 60;
 }
 const breakMins = day => (Number(day.lunch) || 0) + (Number(day.breakfast) || 0);
 function fmt(h, signed) {
@@ -120,15 +121,17 @@ function fail(e) {
 function listen() {
   unsubs.push(onSnapshot(doc(db, "users", uid), snap => {
     const d = snap.exists() ? snap.data() : {};
-    settings = { target: d.target ?? DEFAULTS.target, lunch: d.lunch ?? DEFAULTS.lunch };
-     breakfastOn: d.breakfastOn ?? DEFAULTS.breakfastOn, breakfast: d.breakfast ?? DEFAULTS.breakfast};
+    settings = {
+      target: d.target ?? DEFAULTS.target, lunch: d.lunch ?? DEFAULTS.lunch,
+      breakfastOn: d.breakfastOn ?? DEFAULTS.breakfastOn, breakfast: d.breakfast ?? DEFAULTS.breakfast
+    };
     render();
   }, fail));
   unsubs.push(onSnapshot(collection(db, "users", uid, "days"), { includeMetadataChanges: true }, snap => {
     const fresh = {};
     snap.forEach(d => {
       const v = d.data();
-      fresh[d.id] = { date: d.id, clockIn: v.clockIn, clockOut: v.clockOut || null, lunch: v.lunch ||0, breakfast: v.breakfast || 0 };
+      fresh[d.id] = { date: d.id, clockIn: v.clockIn, clockOut: v.clockOut || null, lunch: v.lunch || 0, breakfast: v.breakfast || 0 };
     });
     days = fresh; loaded = true;
     $("sync").textContent = snap.metadata.hasPendingWrites
@@ -243,8 +246,8 @@ function openEdit(key) {
   $("eDate").value = keyOf(new Date());
   $("eIn").value = d ? d.clockIn || "" : "08:00";
   $("eOut").value = d ? d.clockOut || "" : "16:30";
-  $("eBreakfast").value = d ? (d.breakfast || 0) : (settings.breakfastOn ? settings.breakfast : 0);
   $("eLunch").value = d ? (d.lunch || 0) : settings.lunch;
+  $("eBreakfast").value = d ? (d.breakfast || 0) : (settings.breakfastOn ? settings.breakfast : 0);
   $("eDelete").hidden = !key;
   $("edit").showModal();
 }
@@ -256,6 +259,7 @@ $("eSave").onclick = () => {
   const breakfast = parseInt($("eBreakfast").value, 10) || 0;
   if (!key || !$("eIn").value) { toast("Fyll i datum och intid."); return; }
   if (lunch < 0 || lunch > 180) { toast("Lunch kan vara 0 till 180 minuter."); return; }
+  if (breakfast < 0 || breakfast > 180) { toast("Frukost kan vara 0 till 180 minuter."); return; }
   if (!editingKey && days[key]) { toast("Den dagen finns redan. Tryck på raden för att rätta den."); return; }
   lastStamp = null;
   saveDay(key, { clockIn: $("eIn").value, clockOut: $("eOut").value || null, lunch, breakfast });
@@ -276,9 +280,9 @@ $("export").onclick = () => {
   keys.forEach(k => {
     const d = days[k], h = dayHours(d);
     if (h !== null) { sumH += h; sumD += h - settings.target; }
-    lines.push([k, d.clockIn || "", d.clockOut ||"", d.breakfast || "", d.lunch || 0, h === null ? "" : num(h), h === null ? "" : num(h - settings.target)].join(";"));
+    lines.push([k, d.clockIn || "", d.clockOut || "", d.breakfast || 0, d.lunch || 0, h === null ? "" : num(h), h === null ? "" : num(h - settings.target)].join(";"));
   });
-  lines.push(["Summa", "", "", "", num(sumH), num(sumD)].join(";"));
+  lines.push(["Summa", "", "", "", "", num(sumH), num(sumD)].join(";"));
   const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob); a.download = "tidkort-" + start + "-till-" + end + ".csv";
@@ -287,6 +291,7 @@ $("export").onclick = () => {
 };
 
 /* ---------- visning ---------- */
+// Rastkolumnen: bara lunch som förut, eller frukost + lunch när frukost finns
 const breakCell = (d, k) => {
   const parts = [];
   if (d.breakfast) parts.push(stampSpan(d.breakfast + "'", k + ":break"));
@@ -307,7 +312,6 @@ function render() {
   $("sBreakfastOn").checked = !!settings.breakfastOn;
   $("sBreakfastRow").hidden = !settings.breakfastOn;
 
-
   const P = $("primary"), L = $("lunch"), B = $("breakfast");
   P.classList.remove("out"); $("undo").hidden = true;
   if (!loaded) {
@@ -318,8 +322,9 @@ function render() {
     const open = openShift(), today = days[todayK];
     if (open) {
       const [k, d] = open;
-      const mins = Math.max(0, Math.floor((now - new Date(k + "T" + d.clockIn)) / 60000 - (Number(d.lunch) || 0)));
-      $("status").textContent = (k === todayK ? "Instämplad " : "Instämplad " + dayName(k) + " ") + d.clockIn + (d.lunch ? ", lunch loggad" : "");
+      const mins = Math.max(0, Math.floor((now - new Date(k + "T" + d.clockIn)) / 60000 - breakMins(d)));
+      $("status").textContent = (k === todayK ? "Instämplad " : "Instämplad " + dayName(k) + " ") + d.clockIn +
+        (d.breakfast && d.lunch ? ", frukost och lunch loggade" : d.breakfast ? ", frukost loggad" : d.lunch ? ", lunch loggad" : "");
       $("big").textContent = Math.floor(mins / 60) + " h " + pad(mins % 60) + " min";
       P.textContent = "Ska ut. Nu är det slut."; P.classList.add("out");
       L.hidden = false; L.disabled = !!d.lunch;
