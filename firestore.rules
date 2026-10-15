@@ -1,15 +1,9 @@
-rules_version = '2';
-
-// ===============================================================
-// Assumed Data Model
-// ===============================================================
-//
-// Collection: users
-// Document ID: the signed-in user's Firebase Auth uid
 // Fields:
 //   - target: number (required, 1 to 24) - normal working hours per day
 //   - lunch: int (required, 0 to 180) - default lunch length in minutes
 //   - updatedAt: timestamp (required, must equal server time of the write)
+//   - breakfastOn: bool (optional) - show the breakfast button
+//   - breakfast: int (optional, 0 to 180) - default breakfast length in minutes
 //
 // Subcollection: users/{uid}/days
 // Document ID: date as YYYY-MM-DD
@@ -19,6 +13,9 @@ rules_version = '2';
 //   - clockOut: string HH:MM or null (required key; null while the shift is open)
 //   - lunch: int (required, 0 to 180) - minutes subtracted for lunch
 //   - updatedAt: timestamp (required, must equal server time of the write)
+//   - breakfast: int (optional, 0 to 180) - minutes subtracted for breakfast
+//
+// Optional fields may be missing: documents written before they existed stay valid.
 //
 // No email addresses or other personal details are stored in Firestore.
 // Every document is readable and writable only by the user who owns it.
@@ -46,24 +43,33 @@ service cloud.firestore {
     function isServerTime(v) {
       return v is timestamp && v == request.time;
     }
+    function isOptionalMinutes(data, field) {
+      return !(field in data) || (data[field] is int && data[field] >= 0 && data[field] <= 180);
+    }
+    function isOptionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
 
     // ---------------- Domain validators ----------------
     function isValidSettings(data) {
-      return hasOnlyAllowedFields(['target', 'lunch', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['target', 'lunch', 'updatedAt', 'breakfastOn', 'breakfast']) &&
              hasRequiredFields(['target', 'lunch', 'updatedAt']) &&
              data.target is number && data.target >= 1 && data.target <= 24 &&
              data.lunch is int && data.lunch >= 0 && data.lunch <= 180 &&
+             isOptionalBool(data, 'breakfastOn') &&
+             isOptionalMinutes(data, 'breakfast') &&
              isServerTime(data.updatedAt);
     }
 
     function isValidDay(dayId, data) {
-      return hasOnlyAllowedFields(['date', 'clockIn', 'clockOut', 'lunch', 'updatedAt']) &&
+      return hasOnlyAllowedFields(['date', 'clockIn', 'clockOut', 'lunch', 'updatedAt', 'breakfast']) &&
              hasRequiredFields(['date', 'clockIn', 'clockOut', 'lunch', 'updatedAt']) &&
              dayId.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$') &&
              data.date == dayId &&
              isTime(data.clockIn) &&
              (data.clockOut == null || isTime(data.clockOut)) &&
              data.lunch is int && data.lunch >= 0 && data.lunch <= 180 &&
+             isOptionalMinutes(data, 'breakfast') &&
              isServerTime(data.updatedAt);
     }
 
