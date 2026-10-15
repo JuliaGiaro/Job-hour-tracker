@@ -1,7 +1,7 @@
 // Stämpelklockan: Firebase Authentication (e-post/lösenord) + Cloud Firestore.
 // Datamodell (se firestore.rules):
-//   users/{uid}                 inställningar: target, lunch, updatedAt
-//   users/{uid}/days/{datum}    en dag: date, clockIn, clockOut, lunch, updatedAt
+//   users/{uid}                 inställningar: target, lunch, updatedAt (+ valfritt breakfastOn, breakfast)
+//   users/{uid}/days/{datum}    en dag:  date, clockIn, clockOut, lunch, updatedAt (+ valfritt breakfast)
 import { initializeApp } from "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
@@ -40,7 +40,7 @@ const pad = n => String(n).padStart(2, "0");
 const keyOf = d => d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
 const hm = d => pad(d.getHours()) + ":" + pad(d.getMinutes());
 const toMin = s => { const [h, m] = s.split(":").map(Number); return h * 60 + m; };
-const DEFAULTS = { target: 8, lunch: 30 };
+const DEFAULTS = { target: 8, lunch: 30, breakfastOn: false, breakfast: 30 };
 
 let uid = null;
 let settings = { ...DEFAULTS };
@@ -73,6 +73,7 @@ function dayHours(day) {
   if (mins < 0) mins += 1440;
   return (mins - (Number(day.lunch) || 0)) / 60;
 }
+const breakMins = day => (Number(day.lunch) || 0) + (Number(day.breakfast) || 0);
 function fmt(h, signed) {
   const neg = h < 0; const t = Math.round(Math.abs(h) * 60);
   const s = Math.floor(t / 60) + " h " + pad(t % 60) + " min";
@@ -92,6 +93,7 @@ function saveDay(key, day) {
   // Uppdatera skärmen direkt; Firestore köar skrivningen om nätet saknas.
   if (day) {
     const data = { date: key, clockIn: day.clockIn, clockOut: day.clockOut || null, lunch: Number(day.lunch) || 0 };
+    if (Number(day.breakfast) > 0) data.breakfast = Math.round(Number(day.breakfast));
     days[key] = data;
     setDoc(dayRef(key), { ...data, updatedAt: serverTimestamp() }).catch(fail);
   } else {
@@ -102,7 +104,9 @@ function saveDay(key, day) {
 }
 function saveSettings() {
   setDoc(doc(db, "users", uid), {
-    target: Number(settings.target), lunch: Math.round(Number(settings.lunch)), updatedAt: serverTimestamp()
+    target: Number(settings.target), lunch: Math.round(Number(settings.lunch)),
+    breakfastOn: !!settings.breakfastOn, breakfast: Math.round(Number(settings.breakfast)),
+    updatedAt: serverTimestamp()
   }).catch(fail);
 }
 function fail(e) {
@@ -117,13 +121,14 @@ function listen() {
   unsubs.push(onSnapshot(doc(db, "users", uid), snap => {
     const d = snap.exists() ? snap.data() : {};
     settings = { target: d.target ?? DEFAULTS.target, lunch: d.lunch ?? DEFAULTS.lunch };
+     breakfastOn: d.breakfastOn ?? DEFAULTS.breakfastOn, breakfast: d.breakfast ?? DEFAULTS.breakfast};
     render();
   }, fail));
   unsubs.push(onSnapshot(collection(db, "users", uid, "days"), { includeMetadataChanges: true }, snap => {
     const fresh = {};
     snap.forEach(d => {
       const v = d.data();
-      fresh[d.id] = { date: d.id, clockIn: v.clockIn, clockOut: v.clockOut || null, lunch: v.lunch || 0 };
+      fresh[d.id] = { date: d.id, clockIn: v.clockIn, clockOut: v.clockOut || null, lunch: v.lunch ||0, breakfast: v.breakfast || 0 };
     });
     days = fresh; loaded = true;
     $("sync").textContent = snap.metadata.hasPendingWrites
@@ -207,6 +212,11 @@ $("primary").onclick = () => {
     saveDay(k, { clockIn: hm(now), clockOut: null, lunch: 0 });
   }
 };
+$("breakfast").onclick = () => {
+  const open = openShift(); if (!open || open[1].breakfast) return;
+  lastStamp = open[0] + ":break";
+  saveDay(open[0], { ...open[1], breakfast: Number(settings.breakfast) || 30 });
+};
 $("lunch").onclick = () => {
   const open = openShift(); if (!open || open[1].lunch) return;
   lastStamp = open[0] + ":lunch";
@@ -220,6 +230,8 @@ $("prev").onclick = () => { viewPeriod = shiftPeriod(viewPeriod, -1); render(); 
 $("next").onclick = () => { viewPeriod = shiftPeriod(viewPeriod, 1); render(); };
 
 $("sTarget").onchange = e => { const v = parseFloat(e.target.value); if (v >= 1 && v <= 24) { settings.target = v; saveSettings(); render(); } else render(); };
+$("sBreakfastOn").onchange = e => { settings.breakfastOn = e.target.checked; saveSettings(); render(); };
+$("sBreakfast").onchange = e => { const v = parseInt(e.target.value, 10); if (v >= 0 && v <= 180) { settings.breakfast = v; saveSettings(); } else render(); };
 $("sLunch").onchange = e => { const v = parseInt(e.target.value, 10); if (v >= 0 && v <= 180) { settings.lunch = v; saveSettings(); } else render(); };
 
 /* ---------- rätta / lägga till dag ---------- */
@@ -231,6 +243,7 @@ function openEdit(key) {
   $("eDate").value = keyOf(new Date());
   $("eIn").value = d ? d.clockIn || "" : "08:00";
   $("eOut").value = d ? d.clockOut || "" : "16:30";
+  $("eBreakfast").value = d ? (d.breakfast || 0) : (settings.breakfastOn ? settings.breakfast : 0);
   $("eLunch").value = d ? (d.lunch || 0) : settings.lunch;
   $("eDelete").hidden = !key;
   $("edit").showModal();
@@ -240,11 +253,12 @@ $("eCancel").onclick = () => $("edit").close();
 $("eSave").onclick = () => {
   const key = editingKey || $("eDate").value;
   const lunch = parseInt($("eLunch").value, 10) || 0;
+  const breakfast = parseInt($("eBreakfast").value, 10) || 0;
   if (!key || !$("eIn").value) { toast("Fyll i datum och intid."); return; }
   if (lunch < 0 || lunch > 180) { toast("Lunch kan vara 0 till 180 minuter."); return; }
   if (!editingKey && days[key]) { toast("Den dagen finns redan. Tryck på raden för att rätta den."); return; }
   lastStamp = null;
-  saveDay(key, { clockIn: $("eIn").value, clockOut: $("eOut").value || null, lunch });
+  saveDay(key, { clockIn: $("eIn").value, clockOut: $("eOut").value || null, lunch, breakfast });
   $("edit").close();
 };
 $("eDelete").onclick = () => {
@@ -257,12 +271,12 @@ $("export").onclick = () => {
   const end = viewPeriod, start = periodStart(end);
   const keys = Object.keys(days).filter(k => k >= start && k <= end).sort();
   const num = n => n.toFixed(2).replace(".", ",");
-  const lines = ["Datum;In;Ut;Lunch (min);Timmar;Över/under"];
+  const lines = ["Datum;In;Ut;Frukost (min);Lunch (min);Timmar;Över/under"];
   let sumH = 0, sumD = 0;
   keys.forEach(k => {
     const d = days[k], h = dayHours(d);
     if (h !== null) { sumH += h; sumD += h - settings.target; }
-    lines.push([k, d.clockIn || "", d.clockOut || "", d.lunch || 0, h === null ? "" : num(h), h === null ? "" : num(h - settings.target)].join(";"));
+    lines.push([k, d.clockIn || "", d.clockOut ||"", d.breakfast || "", d.lunch || 0, h === null ? "" : num(h), h === null ? "" : num(h - settings.target)].join(";"));
   });
   lines.push(["Summa", "", "", "", num(sumH), num(sumD)].join(";"));
   const blob = new Blob(["﻿" + lines.join("\n")], { type: "text/csv" });
@@ -273,6 +287,12 @@ $("export").onclick = () => {
 };
 
 /* ---------- visning ---------- */
+const breakCell = (d, k) => {
+  const parts = [];
+  if (d.breakfast) parts.push(stampSpan(d.breakfast + "'", k + ":break"));
+  if (d.lunch) parts.push(stampSpan(d.lunch + "'", k + ":lunch"));
+  return parts.length ? parts.join(" + ") : "–";
+};
 const stampSpan = (text, id) => lastStamp === id ? '<span class="stamped">' + text + "</span>" : text;
 const setSigned = (el, v) => { el.textContent = fmt(v, true); el.className = v > 0.001 ? "pos" : v < -0.001 ? "neg" : ""; };
 
@@ -283,12 +303,16 @@ function render() {
   if (!viewPeriod) viewPeriod = periodEnd(todayK);
   if (document.activeElement !== $("sTarget")) $("sTarget").value = settings.target;
   if (document.activeElement !== $("sLunch")) $("sLunch").value = settings.lunch;
+  if (document.activeElement !== $("sBreakfast")) $("sBreakfast").value = settings.breakfast;
+  $("sBreakfastOn").checked = !!settings.breakfastOn;
+  $("sBreakfastRow").hidden = !settings.breakfastOn;
 
-  const P = $("primary"), L = $("lunch");
+
+  const P = $("primary"), L = $("lunch"), B = $("breakfast");
   P.classList.remove("out"); $("undo").hidden = true;
   if (!loaded) {
     $("status").textContent = "Hämtar dina tider…"; $("big").innerHTML = "&nbsp;";
-    P.disabled = true; L.hidden = true;
+    P.disabled = true; L.hidden = true; B.hidden = true;
   } else {
     P.disabled = false;
     const open = openShift(), today = days[todayK];
@@ -300,16 +324,19 @@ function render() {
       P.textContent = "Ska ut. Nu är det slut."; P.classList.add("out");
       L.hidden = false; L.disabled = !!d.lunch;
       L.textContent = d.lunch ? "Lunch loggad (" + d.lunch + " min)" : "Äh, nu tar vi lunch";
+      // Frukost visas när den är påslagen, eller om dagen redan har frukost loggad
+      B.hidden = !(settings.breakfastOn || d.breakfast); B.disabled = !!d.breakfast;
+      B.textContent = d.breakfast ? "Frukost loggad (" + d.breakfast + " min)" : "Frukostdags";
     } else if (today && today.clockOut) {
       const h = dayHours(today), diff = h - settings.target;
       $("status").textContent = "Klar för idag, " + today.clockIn + " till " + today.clockOut;
       $("big").textContent = fmt(h);
       P.textContent = diff >= 0 ? "Bra jobbat. " + fmt(diff, true) + " idag." : fmt(diff, true) + " idag.";
-      P.disabled = true; L.hidden = true; $("undo").hidden = false;
+      P.disabled = true; L.hidden = true; B.hidden = true; $("undo").hidden = false;
     } else {
       $("status").textContent = "Inte instämplad";
       $("big").textContent = hm(now);
-      P.textContent = "Clock in, lock in"; L.hidden = true;
+      P.textContent = "Clock in, lock in"; L.hidden = true; B.hidden = true;
     }
   }
 
@@ -329,11 +356,11 @@ function render() {
     rows += '<tr class="day" data-k="' + k + '" tabindex="0"><td>' + dayName(k) + "</td>" +
       '<td class="t">' + stampSpan(d.clockIn || "", k + ":in") + "</td>" +
       '<td class="t' + (d.clockOut ? "" : " open") + '">' + (d.clockOut ? stampSpan(d.clockOut, k + ":out") : "pågår") + "</td>" +
-      "<td>" + (d.lunch ? stampSpan(d.lunch + "'", k + ":lunch") : "–") + "</td>" +
+      "<td>" + breakCell(d, k) + "</td>" +
       '<td class="r ' + cls + '">' + (h === null ? "" : fmt(diff, true)) + "</td></tr>";
   });
   $("rowsWrap").innerHTML = keys.length
-    ? '<table class="rows"><thead><tr><th>Dag</th><th>In</th><th>Ut</th><th>Lunch</th><th class="r">±</th></tr></thead><tbody>' + rows + "</tbody></table>"
+    ? '<table class="rows"><thead><tr><th>Dag</th><th>In</th><th>Ut</th><th>Rast</th><th class="r">±</th></tr></thead><tbody>' + rows + "</tbody></table>"
     : '<p class="empty">' + (loaded ? "Inga dagar i den här perioden än." : "Hämtar…") + "</p>";
   $("tHours").textContent = fmt(sumH);
   setSigned($("tOver"), sumD); setSigned($("tBal"), bal);
